@@ -1,0 +1,13 @@
+saas_subscription_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: orbit_dbt_role
+      database: orbit_analytics
+      warehouse: orbit_wh
+      schema: dev
+      threads: 4
