@@ -1,0 +1,30 @@
+version: 2
+
+models: 
+  - name: subscription_mrr_movements
+    description: One row per subscription, describing subscription/mrr movement.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - subscription_id
+              - effective_date
+    columns:
+      - name: subscription_id
+        data_tests:
+        - not_null
+        - relationships:
+            arguments:
+              to: ref('dim_subscriptions_current')
+              field: subscription_id
+      - name: movement_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new','reactivation', 'expansion', 'contraction', 'at_risk', 'churn']
+      - name: effective_date
+        data_tests:
+          - not_null
+
+                  
