@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: fct_product_events
+    description: >
+      One row per product usage event. Incremental (merge on event_id,
+      high-water-marked on event_timestamp) so re-running doesn't
+      reprocess the full event history.
+    columns:
+      - name: event_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__users')
+                field: user_id
+
+  - name: dim_subscriptions_current
+    description: One row per subscription, current state only, joined to user attributes.
+    columns:
+      - name: subscription_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__users')
+                field: user_id
