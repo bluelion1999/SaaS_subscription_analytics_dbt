@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: stg_orbit__users
+    description: One row per user, 1:1 cleanup of raw_users.
+    columns:
+      - name: user_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_orbit__subscriptions
+    description: >
+      One row per subscription as it currently stands. This is the mutable
+      table that snapshots/subscriptions_snapshot.sql tracks history for.
+    columns:
+      - name: subscription_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__users')
+                field: user_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['trial', 'active', 'past_due', 'canceled']
+      - name: plan_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['starter', 'pro', 'enterprise']
+
+  - name: stg_orbit__product_events
+    description: One row per product usage event.
+    columns:
+      - name: event_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__users')
+                field: user_id
+
+  - name: stg_orbit__invoices
+    description: One row per invoice issued against a subscription.
+    columns:
+      - name: invoice_id
+        data_tests:
+          - unique
+          - not_null
+      - name: subscription_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__subscriptions')
+                field: subscription_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['paid', 'failed', 'refunded']
