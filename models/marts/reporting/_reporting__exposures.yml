@@ -1,0 +1,15 @@
+version: 2
+
+exposures:
+  - name: gtm_ai_bot
+    type: application
+    maturity: low
+    description: >
+      Natural-language query bot for GTM/business teams to ask questions about 
+      subscription MRR movements and current subscription state, via Snowflake Cortex Analyst.
+    depends_on:
+      - ref('subscription_mrr_movements')
+      - ref('dim_subscriptions_current')
+    owner:
+      name: Bryce Drynan
+      email: bryce@drynan.com
