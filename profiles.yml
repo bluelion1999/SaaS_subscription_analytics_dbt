@@ -11,3 +11,23 @@ saas_subscription_analytics:
       warehouse: orbit_wh
       schema: dev
       threads: 4
+    ci:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: orbit_dbt_role
+      database: orbit_analytics
+      warehouse: orbit_wh
+      schema: ci
+      threads: 4
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: orbit_dbt_role
+      database: orbit_analytics
+      warehouse: orbit_wh
+      schema: prod
+      threads: 4
