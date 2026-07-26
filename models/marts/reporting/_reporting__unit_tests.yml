@@ -1,0 +1,75 @@
+version: 2
+
+
+unit_tests:
+  - name: test_trial_conversion_is_new
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 1, status: 'trial', mrr_amount: 0, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 1, status: 'active', mrr_amount: 29, dbt_valid_from: '2026-01-15'}
+    expect:
+      rows:
+        - {movement_type: 'new'}
+        - {movement_type: 'new'}
+
+  - name: test_past_due_to_canceled_is_churn
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 2, status: 'past_due', mrr_amount: 99, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 2, status: 'canceled', mrr_amount: 99, dbt_valid_from: '2026-01-14'}
+    expect:
+        rows:
+          - {movement_type: 'new'}
+          - {movement_type: 'churn'}
+  
+  - name: test_active_to_past_due_at_risk
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 3, status: 'active', mrr_amount: 120, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 3, status: 'past_due', mrr_amount: 120, dbt_valid_from: '2026-01-14'}
+    expect:
+        rows:
+          - {movement_type: 'new'}
+          - {movement_type: 'at_risk'}
+
+  - name: test_active_to_active_no_change
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 4, status: 'active', mrr_amount: 50, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 4, status: 'active', mrr_amount: 50, dbt_valid_from: '2026-01-14'}
+    expect:
+        rows:
+          - {movement_type: 'new'}
+          - {movement_type: 'no_change'}
+
+  - name: test_active_to_active_contraction
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 5, status: 'active', mrr_amount: 100, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 5, status: 'active', mrr_amount: 75, dbt_valid_from: '2026-01-14'}
+    expect:
+        rows:
+          - {movement_type: 'new'}
+          - {movement_type: 'contraction'}
+
+  - name: test_active_to_active_expansion
+    model: subscription_mrr_movements
+    given:
+      - input: ref('subscriptions_snapshot')
+        rows:
+          - {subscription_id: 5, status: 'active', mrr_amount: 100, dbt_valid_from: '2026-01-01'}
+          - {subscription_id: 5, status: 'active', mrr_amount: 150, dbt_valid_from: '2026-01-14'}
+    expect:
+        rows:
+          - {movement_type: 'new'}
+          - {movement_type: 'expansion'}
