@@ -198,24 +198,13 @@ SUGGESTED_QUESTIONS = [
 ]
 
 
-def render_consensus(consensus: str):
-    if consensus.startswith(f"{N_VOTERS} of {N_VOTERS}"):
-        st.success(f"✓ {consensus}")
-    elif consensus.startswith("0 of"):
-        st.error(consensus)
-    elif "no consensus" in consensus:
-        st.warning(f"⚠ {consensus}")
-    else:
-        st.info(consensus)
-
-
 def process_question(question: str):
     st.session_state.messages.append({"role": "user", "text": question})
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking (asking 3 times and comparing answers)..."):
+        with st.spinner("Thinking..."):
             try:
                 result = ask_with_voting(question)
                 text = extract_text(result["response"])
@@ -226,13 +215,11 @@ def process_question(question: str):
                 if sql:
                     with st.expander("Generated SQL", expanded=False):
                         st.code(sql, language="sql")
-                render_consensus(result["consensus"])
                 st.session_state.messages.append({
                     "role": "assistant",
                     "text": text,
                     "dataframe": result["dataframe"],
                     "sql": sql,
-                    "consensus": result["consensus"],
                 })
             except Exception as e:
                 st.error(str(e))
@@ -275,12 +262,11 @@ st.caption(
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if not st.session_state.messages:
-    st.markdown("**Try asking:**")
-    cols = st.columns(len(SUGGESTED_QUESTIONS))
-    for col, suggestion in zip(cols, SUGGESTED_QUESTIONS):
-        if col.button(suggestion, use_container_width=True):
-            st.session_state.pending_question = suggestion
+st.markdown("**Try asking:**")
+cols = st.columns(len(SUGGESTED_QUESTIONS))
+for col, suggestion in zip(cols, SUGGESTED_QUESTIONS):
+    if col.button(suggestion, use_container_width=True):
+        st.session_state.pending_question = suggestion
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -290,8 +276,6 @@ for message in st.session_state.messages:
         if message.get("sql"):
             with st.expander("Generated SQL", expanded=False):
                 st.code(message["sql"], language="sql")
-        if message.get("consensus"):
-            render_consensus(message["consensus"])
 
 question = st.chat_input("Ask a question about subscriptions or MRR movements...")
 if not question and st.session_state.get("pending_question"):
