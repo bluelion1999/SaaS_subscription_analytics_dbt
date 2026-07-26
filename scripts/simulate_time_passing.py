@@ -76,6 +76,20 @@ def update_status(cur, subscription_ids, new_status):
     )
 
 
+def cancel_subscriptions(cur, subscription_ids):
+    # Cancellation also zeroes mrr_amount -- a canceled subscription stops
+    # contributing revenue, so churned MRR should show up as a real negative
+    # delta rather than $0 (which is what update_status alone would produce,
+    # since it only ever touches status).
+    if not subscription_ids:
+        return
+    ids = ",".join(str(i) for i in subscription_ids)
+    cur.execute(
+        f"update raw_subscriptions set status = 'canceled', mrr_amount = 0, updated_at = current_timestamp() "
+        f"where subscription_id in ({ids})"
+    )
+
+
 def change_plan_tier(cur, subscription_ids, path):
     for sub_id in subscription_ids:
         cur.execute("select plan_tier from raw_subscriptions where subscription_id = %s", (sub_id,))
@@ -105,7 +119,7 @@ def mutate_subscriptions(cur):
 
     update_status(cur, to_activate, "active")
     update_status(cur, to_past_due, "past_due")
-    update_status(cur, to_cancel, "canceled")
+    cancel_subscriptions(cur, to_cancel)
     update_status(cur, to_recover, "active")
     change_plan_tier(cur, to_upgrade, UPGRADE_PATH)
     change_plan_tier(cur, to_downgrade, DOWNGRADE_PATH)
