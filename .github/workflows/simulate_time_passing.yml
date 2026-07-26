@@ -1,0 +1,58 @@
+name: Simulate a day passing
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # once daily, 13:00 UTC
+  workflow_dispatch: {}  # allow manual runs too, for demos/testing
+
+# Auto-disables itself after the cutoff below (set 10 days out from setup) --
+# see check_expiry job. This is a demo project; the simulated "time passing"
+# data doesn't need to keep accumulating indefinitely.
+permissions:
+  actions: write
+
+jobs:
+  check_expiry:
+    runs-on: ubuntu-latest
+    outputs:
+      expired: ${{ steps.check.outputs.expired }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cutoff="2026-08-05"
+          today=$(date -u +%F)
+          if [[ "$today" > "$cutoff" ]]; then
+            echo "expired=true" >> "$GITHUB_OUTPUT"
+            echo "Past cutoff ($cutoff) -- disabling this scheduled workflow."
+            gh workflow disable simulate_time_passing.yml --repo "$GITHUB_REPOSITORY"
+          else
+            echo "expired=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  simulate_and_rebuild:
+    needs: check_expiry
+    if: needs.check_expiry.outputs.expired != 'true'
+    runs-on: ubuntu-latest
+    env:
+      DBT_PROFILES_DIR: .
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install dbt-snowflake
+      - run: dbt deps
+
+      - name: Simulate a day passing (mutate subscriptions, append events)
+        run: python scripts/simulate_time_passing.py
+
+      - name: Capture the mutations as SCD2 history
+        run: dbt snapshot --target prod
+
+      - name: Rebuild everything downstream of the new data
+        run: dbt build --target prod --exclude resource_type:seed
