@@ -32,6 +32,7 @@ EVENT_TYPES_WEIGHTED = (
     ["login"] * 35 + ["page_view"] * 30 + ["feature_used"] * 20
     + ["export_report"] * 8 + ["invite_sent"] * 5 + ["upgrade_clicked"] * 2
 )
+INVOICE_STATUSES_WEIGHTED = ["paid"] * 88 + ["failed"] * 8 + ["refunded"] * 4
 
 
 def load_env(path=ENV_PATH):
@@ -156,11 +157,38 @@ def insert_new_events(cur, n_events=300):
     print(f"inserted {len(rows)} new product events starting at event_id {max_id + 1}")
 
 
+def insert_new_invoices(cur):
+    # Runs after mutate_subscriptions so a subscription that just upgraded,
+    # downgraded, or activated this round is billed at its new mrr_amount,
+    # not last round's. Only currently billable (active/past_due)
+    # subscriptions get a new invoice -- canceled ones don't.
+    cur.execute("select coalesce(max(invoice_id), 0) from raw_invoices")
+    max_id = cur.fetchone()[0]
+
+    cur.execute(
+        "select subscription_id, mrr_amount from raw_subscriptions "
+        "where status in ('active', 'past_due')"
+    )
+    billable = cur.fetchall()
+
+    rows = [
+        (max_id + i + 1, subscription_id, mrr_amount, random.choice(INVOICE_STATUSES_WEIGHTED))
+        for i, (subscription_id, mrr_amount) in enumerate(billable)
+    ]
+    cur.executemany(
+        "insert into raw_invoices (invoice_id, subscription_id, amount, invoice_date, status) "
+        "values (%s, %s, %s, current_date(), %s)",
+        rows,
+    )
+    print(f"inserted {len(rows)} new invoices starting at invoice_id {max_id + 1}")
+
+
 if __name__ == "__main__":
     conn = connect()
     cur = conn.cursor()
     try:
         mutate_subscriptions(cur)
+        insert_new_invoices(cur)
         insert_new_events(cur)
         conn.commit()
         print("done -- run `dbt snapshot` and `dbt run` to see the effects")

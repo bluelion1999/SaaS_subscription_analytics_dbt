@@ -60,3 +60,19 @@ models:
           - accepted_values:
               arguments:
                 values: ['paid', 'failed', 'refunded']
+
+  - name: subscription_engagement_summary
+    description: >
+      One row per subscription with usage aggregates from fct_product_events.
+      Only covers subscriptions that had at least one eligible event during
+      simulate_time_passing.py's runs -- canceled subscriptions may have no
+      row here at all.
+    columns:
+      - name: subscription_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_subscriptions_current')
+                field: subscription_id
