@@ -63,5 +63,29 @@ create or replace semantic view orbit_analytics.marts.gtm_ai
       verified_at 1785099365
       onboarding_question true
       sql 'select avg_days_since_last_event from semantic_view(orbit_analytics.marts.gtm_ai metrics engagement.avg_days_since_last_event dimensions subscriptions.status) where status = ''active'''
+    ),
+    expansion_mrr as (
+      question 'What was total expansion MRR from upgrades?'
+      verified_at 1785099782
+      onboarding_question false
+      sql 'select net_mrr_movement from semantic_view(orbit_analytics.marts.gtm_ai metrics movements.net_mrr_movement dimensions movements.movement_type) where movement_type = ''expansion'''
+    ),
+    at_risk_by_plan_tier as (
+      question 'How many at-risk subscriptions are there by plan tier?'
+      verified_at 1785099782
+      onboarding_question false
+      sql 'select plan_tier, subscription_count from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.subscription_count dimensions subscriptions.status, subscriptions.plan_tier) where status = ''past_due'''
+    ),
+    refunded_revenue as (
+      question 'How much revenue was refunded in total?'
+      verified_at 1785099782
+      onboarding_question false
+      sql 'select refunded_revenue from semantic_view(orbit_analytics.marts.gtm_ai metrics invoices.refunded_revenue)'
+    ),
+    total_mrr_by_plan_tier as (
+      question 'What is total current MRR by plan tier?'
+      verified_at 1785099782
+      onboarding_question true
+      sql 'select plan_tier, total_mrr from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.total_mrr dimensions subscriptions.plan_tier)'
     )
   )
