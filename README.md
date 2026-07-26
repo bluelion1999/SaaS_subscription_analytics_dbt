@@ -2,17 +2,19 @@
 
 ![dbt CI](https://github.com/bluelion1999/SaaS_subscription_analytics_dbt/actions/workflows/dbt_ci.yml/badge.svg)
 
-A dbt project modeling a fictional SaaS product (Orbit): users, subscriptions, product usage events, and invoices. Built as a step up from an earlier portfolio project ([wknd_analytics_dbt](https://github.com/bluelion1999/wknd_analytics_dbt), DuckDB + static seeds) into the parts of dbt that only make sense once your data actually changes between runs: snapshots, incremental models, unit tests, and model contracts, running against a real client-server warehouse (Snowflake) instead of an embedded one.
+A dbt project modeling a fictional SaaS product (Orbit): users, subscriptions, product usage events, and invoices. Built as a step up from an earlier portfolio project ([wknd_analytics_dbt](https://github.com/bluelion1999/wknd_analytics_dbt), DuckDB + static seeds) into the parts of dbt that only make sense once your data actually changes between runs — snapshots, incremental models, unit tests, model contracts — plus a second phase covering environment separation, slim CI, and a public natural-language layer on top of the marts via Snowflake Cortex Analyst.
+
+**Live demo:** ask it questions about subscription MRR movements — [GTM AI](https://saassubscriptionanalyticsdbt-dh7pogzyu4qmdjxa9wtzas.streamlit.app/)
 
 ## Why this domain
 
-Subscriptions mutate — `status` moves between `trial`/`active`/`past_due`/`canceled`, `plan_tier` gets upgraded or downgraded — and that mutation is exactly what a static, seed-once dataset can't demonstrate. `scripts/simulate_time_passing.py` writes directly to Snowflake (not through `dbt seed`, which can only replace a table wholesale) to mutate a handful of subscriptions and land a new batch of product events on demand, giving `dbt snapshot` and the incremental model something real to react to between runs.
+Subscriptions mutate — `status` moves between `trial`/`active`/`past_due`/`canceled`, `plan_tier` gets upgraded or downgraded — and that mutation is exactly what a static, seed-once dataset can't demonstrate. `scripts/simulate_time_passing.py` writes directly to Snowflake (not through `dbt seed`, which can only replace a table wholesale) to mutate a handful of subscriptions and land a new batch of product events, giving `dbt snapshot` and the incremental model something real to react to between runs. A [scheduled GitHub Actions workflow](.github/workflows/simulate_time_passing.yml) runs this daily against prod so the project keeps evolving on its own, not just when someone runs it by hand.
 
 ## Architecture
 
 ```mermaid
 graph LR
-    subgraph Raw["Seeds (raw)"]
+    subgraph Raw["Seeds (raw, shared across all environments)"]
         RU[raw_users]
         RS[raw_subscriptions]
         RE[raw_product_events]
@@ -36,6 +38,11 @@ graph LR
         MRR[subscription_mrr_movements]
     end
 
+    subgraph AI["Cortex Analyst"]
+        SEM[gtm_ai semantic view]
+        APP[Public Streamlit app]
+    end
+
     RU --> SU --> DSC
     RS --> SS --> DSC
     RS --> SS --> SNAP
@@ -44,13 +51,18 @@ graph LR
 
     SNAP --> MRR
     DSC --> MRR
+    MRR --> SEM
+    DSC --> SEM
+    SEM --> APP
 ```
 
 **Layers:**
-- **Seeds** — deterministic synthetic data (`scripts/generate_seed_data.py`, fixed random seed, fixed reference date) standing in for a raw source system.
+
+- **Seeds** — deterministic synthetic data (`scripts/generate_seed_data.py`, fixed random seed, fixed reference date) standing in for a raw source system. Lands in one shared `raw` schema regardless of environment.
 - **Staging** — 1:1 cleanup of each source table, no joins.
 - **Snapshot** — `subscriptions_snapshot` captures SCD Type 2 history over the mutable `raw_subscriptions` table using a timestamp strategy on `updated_at`.
 - **Marts** — `dim_subscriptions_current` (current-state dimension), `fct_product_events` (incremental fact table), and `subscription_mrr_movements` (MRR movement classification computed directly off the snapshot's history).
+- **AI layer** — `gtm_ai`, a Cortex Analyst semantic view over exactly the two marts above, queried through a public Streamlit app.
 
 ## Advanced dbt features covered
 
@@ -60,35 +72,64 @@ graph LR
 - **Model contracts** — `fct_product_events` and `dim_subscriptions_current` enforce a typed, fixed column contract, verified by deliberately breaking a column's declared type and confirming the build failed with a clear diff before reverting.
 - **Custom generic test** — `reconciles_to_running_total` (`tests/generic/`) is a reusable reconciliation test asserting that a running sum of a delta column matches a balance column; applied to confirm `mrr_delta` always telescopes correctly to `current_mrr_amount`.
 - **Source freshness** — `raw_subscriptions`/`raw_product_events` have `loaded_at_field` + `freshness` thresholds configured, and `dbt source freshness` correctly reported `STALE` against the static seed data and `PASS` once simulated data landed.
+- **Exposures** — `gtm_ai_bot` documents the Cortex Analyst app as a downstream consumer of the two marts, so it shows up in the lineage graph like any other node.
+- **Environment-aware custom schemas** — `generate_schema_name.sql` keeps clean schema names (`marts`, `staging`, ...) in `prod`, but prefixes them (`dev_marts`, `ci_marts`, ...) everywhere else, giving `dev`/`ci`/`prod` real physical isolation instead of all three silently sharing the same tables.
+- **Slim CI** — pull requests run `dbt build --select state:modified+ --defer --state ...`, diffing against a `manifest.json` staged in Snowflake after each prod build, so a PR only rebuilds/tests what it actually touched instead of the whole DAG. Verified on real GitHub infrastructure: a one-model change selected exactly that model plus its true downstream, nothing else.
+- **dbt-managed grants** — `subscription_mrr_movements` and `dim_subscriptions_current` declare `grants: {select: [...]}` so the public app's read-only role survives every table rebuild (see bugs below for why this matters).
+
+## The Cortex Analyst layer: `gtm_ai`
+
+[`semantic_views/gtm_ai.sql`](semantic_views/gtm_ai.sql) is a native Snowflake `CREATE SEMANTIC VIEW` object (not a dbt-managed resource) scoped to exactly `subscription_mrr_movements` and `dim_subscriptions_current` — nothing else in `marts` is reachable through it. It's queried two ways:
+
+- **Snowsight's built-in Cortex Analyst chat UI**, for interactive exploration with your own Snowflake login.
+- **A public Streamlit app** ([`streamlit_app/gtm_ai_app.py`](streamlit_app/gtm_ai_app.py)), hosted externally on Streamlit Community Cloud so anyone can use it with no Snowflake account at all.
+
+The public app can't use Streamlit-in-Snowflake (SiS has no anonymous-access mode — every SiS viewer must authenticate as a real Snowflake user). Genuine public access means every anonymous visitor rides on one shared service credential behind the scenes, so that credential's restrictions *are* the entire security boundary:
+
+- A dedicated service user (`svc_gtm_ai_app`, `TYPE = SERVICE`) authenticated via a Programmatic Access Token, hard-restricted to one role (`ROLE_RESTRICTION`) that has never been granted anything beyond `SELECT` on the two marts and the semantic view — no write privileges anywhere, no relation to the `orbit_dbt_role` used to build the project.
+- A dedicated low-privilege warehouse with a resource monitor (credit quota + auto-suspend), so anonymous traffic has a hard cost ceiling.
+- Application-layer defense-in-depth on top of that RBAC boundary: exponential-backoff retry on transient API failures only, a read-only SQL allowlist check before ever executing anything Cortex Analyst returns, and 3-way self-consistency voting (ask the same question 3 times, execute each candidate, return the majority result by actual result set — not SQL text).
+
+Verified end-to-end: direct queries against tables outside the granted scope (`fct_product_events`, raw/staging tables) correctly fail on privilege even when attempted directly, bypassing the semantic view entirely — confirming Snowflake's RBAC, not the semantic view's own `TABLES` clause, is the real security boundary.
 
 ## Notable design decisions (and bugs caught along the way)
 
 - **Churn has two paths, not one.** The MRR movement classification originally only treated `active → canceled` as churn. In practice, this dataset's only cancellation path is `past_due → canceled` (accounts almost always fail payment before they're canceled) — so the first version of the logic silently misclassified every real churn event as `'no_change'`. Both paths are now handled explicitly.
 - **`trial → active` is `'new'`, not invisible.** A subscription's first-ever appearance in the snapshot gets `'new'` by definition (no previous state to compare against) — but a trial converting to its first paying period is *also* new business, and needed its own explicit rule rather than falling through to the catch-all.
 - **`active → past_due` is `at_risk`, distinct from `churn`.** The subscription hasn't left yet; conflating the two would understate real churn and overstate risk.
+- **Churned MRR silently computed to $0.** `simulate_time_passing.py`'s cancellation path flipped `status` but never zeroed `mrr_amount`, so `mrr_delta` for every churn event came out to `0` instead of a real negative number — the one metric that most needed to be right was quietly always empty. Fixed by having cancellation explicitly zero `mrr_amount` going forward (existing history left as-is, not rewritten).
 - **Contracts + incremental models require an explicit `on_schema_change`.** dbt refuses `'ignore'` (the default) once a contract is enforced on an incremental model — `'fail'` was chosen here since the contract already owns schema control, so silent auto-altering (`'append_new_columns'`) would be redundant.
-- **CI intentionally excludes seeds.** Unlike a DuckDB project where every CI run gets a fresh, ephemeral database, this project's Snowflake warehouse is persistent and carries real accumulated snapshot/incremental history from `simulate_time_passing.py`. Re-seeding on every push would silently reset that history, so CI runs `dbt build --exclude resource_type:seed` instead, treating the raw tables as already loaded by an upstream process — the seed scripts are for local/demo bootstrapping, not routine CI.
+- **`CREATE OR REPLACE TABLE` drops grants.** Every `dbt build` recreates table-materialized models from scratch, which silently wipes any grants issued via one-off `GRANT` SQL — the public app's access kept breaking after every rebuild until the grants were declared in dbt's own `grants:` config instead, which reconciles them on every run.
+- **`raw` is shared on purpose, not an oversight.** Sources are hardcoded to one literal `raw` schema, bypassing the environment-aware schema macro entirely — this matches how a real upstream EL tool would populate a single landing zone that every dbt environment reads from. (Learned the hard way: an early cleanup pass dropped that schema as "orphaned," breaking every `source()` reference until it was reseeded.)
+- **CI intentionally excludes seeds.** This project's Snowflake warehouse is persistent, unlike a DuckDB project where every CI run gets a fresh ephemeral database — re-seeding on every push would silently reset `raw`'s accumulated history, so CI runs `dbt build --exclude resource_type:seed` instead, treating seeds as a one-time bootstrap rather than routine pipeline state.
+- **The semantic view's grain matters more than its schema.** `subscription_mrr_movements` is one row per movement *event* (safe to `SUM` for movement metrics like churned MRR); `dim_subscriptions_current` is one row per subscription's *current* state (safe to `SUM` for point-in-time totals like active MRR). Summing the wrong table for the wrong question silently double-counts.
 
 ## Project structure
 
 ```
-├── seeds/                            # Deterministic synthetic raw CSV data
+├── seeds/                              # Deterministic synthetic raw CSV data
 ├── scripts/
-│   ├── generate_seed_data.py         # Reproducible initial dataset (fixed seed + reference date)
-│   └── simulate_time_passing.py      # Mutates Snowflake directly: subscription changes + new events
+│   ├── generate_seed_data.py           # Reproducible initial dataset (fixed seed + reference date)
+│   └── simulate_time_passing.py        # Mutates Snowflake directly: subscription changes + new events
 ├── snapshots/
-│   └── subscriptions_snapshot.sql    # SCD2 history over raw_subscriptions
+│   └── subscriptions_snapshot.sql      # SCD2 history over raw_subscriptions
 ├── models/
-│   ├── staging/orbit/                # 1:1 cleanup of raw sources + source freshness config
+│   ├── staging/orbit/                  # 1:1 cleanup of raw sources + source freshness config
 │   └── marts/
-│       ├── core/                     # dim_subscriptions_current, fct_product_events (contracted)
-│       └── reporting/                # subscription_mrr_movements + its unit tests
+│       ├── core/                       # dim_subscriptions_current, fct_product_events (contracted, grants)
+│       └── reporting/                  # subscription_mrr_movements + its unit tests + exposure
 ├── tests/generic/
 │   └── test_reconciles_to_running_total.sql
+├── semantic_views/
+│   └── gtm_ai.sql                      # Cortex Analyst semantic view (not dbt-managed)
+├── streamlit_app/
+│   └── gtm_ai_app.py                   # Public chat UI, hosted externally on Streamlit Community Cloud
 ├── dbt_project.yml
-├── packages.yml                      # dbt_utils
-├── profiles.yml                      # Snowflake connection (env_var-based, no secrets committed)
-└── .github/workflows/dbt_ci.yml      # CI: dbt build against Snowflake on push/PR to main
+├── packages.yml                        # dbt_utils
+├── profiles.yml                        # Snowflake connection: dev/ci/prod targets, env_var-based, no secrets committed
+└── .github/workflows/
+    ├── dbt_ci.yml                      # Slim CI: full prod build on push, state:modified+ on PRs
+    └── simulate_time_passing.yml       # Scheduled daily operational simulation (self-expiring)
 ```
 
 ## Getting started
@@ -119,7 +160,7 @@ export DBT_PROFILES_DIR=.
 
 python scripts/generate_seed_data.py
 dbt seed
-dbt build                              # snapshot + models + tests, in dependency order
+dbt build                              # snapshot + models + tests, in dependency order (dev target by default)
 
 python scripts/simulate_time_passing.py   # simulate a tick of real-world change
 dbt snapshot                              # capture the SCD2 history
@@ -129,10 +170,14 @@ dbt docs generate
 dbt docs serve
 ```
 
+The Cortex Analyst semantic view and the public Streamlit app are set up separately (native Snowflake SQL + a Streamlit Community Cloud deploy, not part of `dbt build`) — see the SQL in `semantic_views/gtm_ai.sql` and the app in `streamlit_app/` for the full setup.
+
 ## Tech stack
 
 - [dbt-core](https://github.com/dbt-labs/dbt-core) 1.12 + [dbt-snowflake](https://github.com/dbt-labs/dbt-snowflake)
-- [Snowflake](https://www.snowflake.com/) (dedicated warehouse/database/role for this project)
+- [Snowflake](https://www.snowflake.com/) (dedicated warehouse/database/role per environment)
+- [Snowflake Cortex Analyst](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst) (native semantic views, natural-language querying)
+- [Streamlit](https://streamlit.io/) (public chat UI, hosted on Streamlit Community Cloud)
 - [dbt_utils](https://github.com/dbt-labs/dbt-utils)
-- Python 3.13 (seed generation and time-passing simulation — not a runtime dependency of the dbt project itself)
-- GitHub Actions for CI
+- Python 3.13 (seed generation, time-passing simulation, and the Streamlit app — not a runtime dependency of the dbt project itself)
+- GitHub Actions (slim CI + scheduled operational simulation)
