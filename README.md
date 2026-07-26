@@ -79,10 +79,10 @@ graph LR
 - **Model contracts** — `fct_product_events` and `dim_subscriptions_current` enforce a typed, fixed column contract, verified by deliberately breaking a column's declared type and confirming the build failed with a clear diff before reverting.
 - **Custom generic test** — `reconciles_to_running_total` (`tests/generic/`) is a reusable reconciliation test asserting that a running sum of a delta column matches a balance column; applied to confirm `mrr_delta` always telescopes correctly to `current_mrr_amount`.
 - **Source freshness** — `raw_subscriptions`/`raw_product_events` have `loaded_at_field` + `freshness` thresholds configured, and `dbt source freshness` correctly reported `STALE` against the static seed data and `PASS` once simulated data landed.
-- **Exposures** — `gtm_ai_bot` documents the Cortex Analyst app as a downstream consumer of the two marts, so it shows up in the lineage graph like any other node.
+- **Exposures** — `gtm_ai_bot` documents the Cortex Analyst app as a downstream consumer of all four marts it queries, so it shows up in the lineage graph like any other node.
 - **Environment-aware custom schemas** — `generate_schema_name.sql` keeps clean schema names (`marts`, `staging`, ...) in `prod`, but prefixes them (`dev_marts`, `ci_marts`, ...) everywhere else, giving `dev`/`ci`/`prod` real physical isolation instead of all three silently sharing the same tables.
 - **Slim CI** — pull requests run `dbt build --select state:modified+ --defer --state ...`, diffing against a `manifest.json` staged in Snowflake after each prod build, so a PR only rebuilds/tests what it actually touched instead of the whole DAG. Verified on real GitHub infrastructure: a one-model change selected exactly that model plus its true downstream, nothing else.
-- **dbt-managed grants** — `subscription_mrr_movements` and `dim_subscriptions_current` declare `grants: {select: [...]}` so the public app's read-only role survives every table rebuild (see bugs below for why this matters).
+- **dbt-managed grants** — all four marts the public app queries declare `grants: {select: [...]}` so its read-only role survives every table rebuild (see bugs below for why this matters).
 
 ## The Cortex Analyst layer: `gtm_ai`
 
@@ -98,6 +98,8 @@ The public app can't use Streamlit-in-Snowflake (SiS has no anonymous-access mod
 - Application-layer defense-in-depth on top of that RBAC boundary: exponential-backoff retry on transient API failures only, a read-only SQL allowlist check before ever executing anything Cortex Analyst returns, and 3-way self-consistency voting (ask the same question 3 times, execute each candidate, return the majority result by actual result set — not SQL text).
 
 Verified end-to-end: direct queries against tables outside the granted scope (`fct_product_events`, raw/staging tables) correctly fail on privilege even when attempted directly, bypassing the semantic view entirely — confirming Snowflake's RBAC, not the semantic view's own `TABLES` clause, is the real security boundary. Also worth knowing if you extend this yourself: `CREATE OR REPLACE SEMANTIC VIEW` drops its grants exactly like a table would, and since it's not dbt-managed there's no automatic reconciliation — the grant has to be manually re-applied after every change (documented at the top of the file).
+
+The semantic view also carries 12 `AI_VERIFIED_QUERIES` — hand-verified natural-language question → SQL pairs (e.g. "What was total churned MRR?", "How much revenue was collected versus lost to failed payments?") that materially improve Cortex Analyst's accuracy on those question patterns. Each was executed and confirmed correct before being marked verified, not just written and assumed right. The Streamlit app's 8 clickable suggested questions mirror a subset of these.
 
 ## Notable design decisions (and bugs caught along the way)
 
