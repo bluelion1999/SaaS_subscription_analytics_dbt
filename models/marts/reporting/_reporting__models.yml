@@ -42,6 +42,9 @@ models:
       One row per invoice. collected_amount/lost_amount/refunded_amount are
       mutually exclusive buckets that sum back to amount, so any one of them
       can be summed over a period with no WHERE clause.
+    config:
+      grants:
+        select: ["svc_gtm_ai_role"]
     columns:
       - name: invoice_id
         data_tests:
@@ -67,6 +70,9 @@ models:
       Only covers subscriptions that had at least one eligible event during
       simulate_time_passing.py's runs -- canceled subscriptions may have no
       row here at all.
+    config:
+      grants:
+        select: ["svc_gtm_ai_role"]
     columns:
       - name: subscription_id
         data_tests:
