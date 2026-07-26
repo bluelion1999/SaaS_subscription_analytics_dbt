@@ -3,14 +3,13 @@ GTM AI -- publicly-hosted Streamlit chat UI over the gtm_ai Cortex Analyst
 semantic view (semantic_views/gtm_ai.sql), scoped to exactly two marts:
 subscription_mrr_movements and dim_subscriptions_current.
 
-Runs externally (Streamlit Community Cloud), NOT Streamlit-in-Snowflake --
-Streamlit-in-Snowflake has no anonymous-access mode, so genuine public
-access (no Snowflake login for visitors) requires this app to authenticate
-to Snowflake itself, via one shared service credential (a Programmatic
-Access Token restricted to svc_gtm_ai_role) that every anonymous visitor
-rides on behind the scenes. That credential's RBAC grants -- SELECT on
+Runs externally (Streamlit Community Cloud), so genuine public
+access requires this app to authenticate to Snowflake itself, 
+via one shared service credential (a Programmatic Access Token restricted to 
+svc_gtm_ai_role) that every anonymous visitor rides on behind the scenes. 
+That credential's RBAC grants -- SELECT on
 exactly subscription_mrr_movements, dim_subscriptions_current, and the
-gtm_ai semantic view, nothing else, no writes -- are the real security
+gtm_ai semantic view, nothing else, no writes; are the real security
 boundary here, not the semantic view's own TABLES clause.
 
 Reliability/safety layered on top of the raw Cortex Analyst call:
@@ -191,29 +190,26 @@ def ask_with_voting(question: str) -> dict:
     return {"response": response, "dataframe": df, "consensus": consensus}
 
 
-st.set_page_config(page_title="GTM AI", layout="wide")
-st.title("GTM AI")
-st.caption(
-    "Ask questions about subscription MRR movements and current subscription state. "
-    "Every question is asked 3 times and only shown if the answers agree."
-)
+SUGGESTED_QUESTIONS = [
+    "What was total churned MRR?",
+    "How many active enterprise subscriptions are there?",
+    "What's total current MRR by plan tier?",
+    "How many subscriptions are currently at risk?",
+]
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["text"])
-        if message.get("dataframe") is not None:
-            st.dataframe(message["dataframe"], use_container_width=True)
-        if message.get("sql"):
-            with st.expander("Generated SQL", expanded=False):
-                st.code(message["sql"], language="sql")
-        if message.get("consensus"):
-            st.caption(message["consensus"])
+def render_consensus(consensus: str):
+    if consensus.startswith(f"{N_VOTERS} of {N_VOTERS}"):
+        st.success(f"✓ {consensus}")
+    elif consensus.startswith("0 of"):
+        st.error(consensus)
+    elif "no consensus" in consensus:
+        st.warning(f"⚠ {consensus}")
+    else:
+        st.info(consensus)
 
-question = st.chat_input("Ask a question about subscriptions or MRR movements...")
-if question:
+
+def process_question(question: str):
     st.session_state.messages.append({"role": "user", "text": question})
     with st.chat_message("user"):
         st.markdown(question)
@@ -230,7 +226,7 @@ if question:
                 if sql:
                     with st.expander("Generated SQL", expanded=False):
                         st.code(sql, language="sql")
-                st.caption(result["consensus"])
+                render_consensus(result["consensus"])
                 st.session_state.messages.append({
                     "role": "assistant",
                     "text": text,
@@ -241,3 +237,65 @@ if question:
             except Exception as e:
                 st.error(str(e))
                 st.session_state.messages.append({"role": "assistant", "text": f"Error: {e}"})
+
+
+st.set_page_config(page_title="GTM AI", page_icon="\U0001F4CA", layout="wide")
+
+with st.sidebar:
+    st.header("About GTM AI")
+    st.markdown(
+        "A natural-language query bot for SaaS subscription analytics, built on "
+        "[Snowflake Cortex Analyst](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst) "
+        "over a semantic view scoped to two dbt-built marts: subscription MRR "
+        "movements and current subscription state."
+    )
+    st.markdown(
+        "**Source code:** "
+        "[GitHub repo](https://github.com/bluelion1999/SaaS_subscription_analytics_dbt)"
+    )
+    st.divider()
+    st.markdown(
+        "**Architecture:** dbt (staging → SCD2 snapshot → incremental fact + "
+        "reporting mart) on Snowflake, queried here through a locked-down, "
+        "read-only service role -- this app can only ever run `SELECT` "
+        "against two specific tables, nothing else."
+    )
+    st.divider()
+    st.caption(
+        f"Every answer is generated {N_VOTERS} times independently and the "
+        "majority result is shown, so a single bad generation doesn't reach you."
+    )
+
+st.title("GTM AI")
+st.caption(
+    "Ask questions about SaaS subscription MRR movements and current subscriptions "
+    "-- answered by Snowflake Cortex Analyst."
+)
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if not st.session_state.messages:
+    st.markdown("**Try asking:**")
+    cols = st.columns(len(SUGGESTED_QUESTIONS))
+    for col, suggestion in zip(cols, SUGGESTED_QUESTIONS):
+        if col.button(suggestion, use_container_width=True):
+            st.session_state.pending_question = suggestion
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["text"])
+        if message.get("dataframe") is not None:
+            st.dataframe(message["dataframe"], use_container_width=True)
+        if message.get("sql"):
+            with st.expander("Generated SQL", expanded=False):
+                st.code(message["sql"], language="sql")
+        if message.get("consensus"):
+            render_consensus(message["consensus"])
+
+question = st.chat_input("Ask a question about subscriptions or MRR movements...")
+if not question and st.session_state.get("pending_question"):
+    question = st.session_state.pop("pending_question")
+
+if question:
+    process_question(question)
