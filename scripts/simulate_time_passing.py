@@ -35,6 +35,10 @@ EVENT_TYPES_WEIGHTED = (
 
 
 def load_env(path=ENV_PATH):
+    # No-op if .env doesn't exist -- e.g. in CI, where the env vars are
+    # already set directly by the workflow instead of read from a file.
+    if not path.exists():
+        return
     with open(path) as f:
         for line in f:
             line = line.strip()
