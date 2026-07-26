@@ -38,6 +38,8 @@ models:
     config:
       contract:
         enforced: true
+      grants:
+        select: ["svc_gtm_ai_role"]
     columns:
       - name: subscription_id
         data_type: number

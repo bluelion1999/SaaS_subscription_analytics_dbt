@@ -3,6 +3,9 @@ version: 2
 models: 
   - name: subscription_mrr_movements
     description: One row per subscription, describing subscription/mrr movement.
+    config:
+      grants:
+        select: ["svc_gtm_ai_role"]
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
