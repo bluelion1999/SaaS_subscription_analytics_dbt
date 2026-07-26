@@ -6,3 +6,4 @@ logs/
 .user.yml
 .DS_Store
 dbt_internal_packages/
+state/

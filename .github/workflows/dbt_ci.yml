@@ -7,32 +7,78 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build_prod:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
     env:
       DBT_PROFILES_DIR: .
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
       SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - run: pip install dbt-snowflake
+      - run: dbt deps
+      - run: dbt build --target prod --exclude resource_type:seed
+      - name: Stage manifest.json
+        run: |
+          python -c "
+          import os, snowflake.connector
+          conn = snowflake.connector.connect(
+              account=os.environ['SNOWFLAKE_ACCOUNT'],
+              user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'],
+              role='orbit_dbt_role',
+              warehouse='orbit_wh',
+              database='orbit_analytics',
+          )
+          cur = conn.cursor()
+          cur.execute(
+              'PUT file://target/manifest.json '
+              '@orbit_analytics.dbt_state.manifest_stage '
+              'OVERWRITE=TRUE AUTO_COMPRESS=FALSE'
+          )
+          cur.close()
+          conn.close()
+          "
 
-      - name: Install dbt
-        run: pip install dbt-snowflake
-
-      - name: Install dbt packages
-        run: dbt deps
-
-      - name: dbt debug
-        run: dbt debug
-
-      - name: dbt build (excluding seeds -- raw tables are treated as already loaded, not reset on every CI run)
-        run: dbt build --exclude resource_type:seed
+  build_pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env: 
+      DBT_PROFILES_DIR: .
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install dbt-snowflake
+      - run: dbt deps
+      - name: Fetch prod manifest
+        run: |
+          mkdir -p state
+          python -c "
+          import os, snowflake.connector
+          conn = snowflake.connector.connect(
+              account=os.environ['SNOWFLAKE_ACCOUNT'],
+              user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'],
+              role='orbit_dbt_role',
+              warehouse='orbit_wh',
+              database='orbit_analytics',
+          )
+          cur = conn.cursor()
+          cur.execute(
+              'GET @orbit_analytics.dbt_state.manifest_stage/manifest.json '
+              'file://state/'
+          )
+          cur.close()
+          conn.close()
+          "
+      - run: dbt build --select state:modified+ --defer --state state/ --target ci
