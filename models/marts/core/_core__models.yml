@@ -6,12 +6,49 @@ models:
       One row per product usage event. Incremental (merge on event_id,
       high-water-marked on event_timestamp) so re-running doesn't
       reprocess the full event history.
+    config:
+      contract:
+        enforced: true
     columns:
       - name: event_id
+        data_type: number
+        constraints:
+          - type: not_null
         data_tests:
           - unique
           - not_null
+        
       - name: user_id
+        data_type: number
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orbit__users')
+                field: user_id
+      
+      - name: event_type
+        data_type: varchar
+      
+      - name: event_timestamp
+        data_type: timestamp_ntz
+
+  - name: dim_subscriptions_current
+    description: One row per subscription, current state only, joined to user attributes.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: subscription_id
+        data_type: number
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+
+      - name: user_id
+        data_type: number
         data_tests:
           - not_null
           - relationships:
@@ -19,17 +56,26 @@ models:
                 to: ref('stg_orbit__users')
                 field: user_id
 
-  - name: dim_subscriptions_current
-    description: One row per subscription, current state only, joined to user attributes.
-    columns:
-      - name: subscription_id
-        data_tests:
-          - unique
-          - not_null
-      - name: user_id
-        data_tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('stg_orbit__users')
-                field: user_id
+      - name: user_name
+        data_type: varchar
+
+      - name: email
+        data_type: varchar
+      
+      - name: country
+        data_type: varchar
+      
+      - name: plan_tier
+        data_type: varchar
+      
+      - name: status
+        data_type: varchar
+
+      - name: mrr_amount
+        data_type: numeric(10,2)
+      
+      - name: created_at
+        data_type: timestamp_ntz
+      
+      - name: updated_at
+        data_type: timestamp_ntz
