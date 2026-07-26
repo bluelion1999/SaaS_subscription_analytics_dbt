@@ -10,5 +10,6 @@ select
     subscriptions.created_at,
     subscriptions.updated_at
 
+-- trivial change to trigger state:modified+ for a real slim CI verification PR
 from {{ ref('stg_orbit__subscriptions') }} as subscriptions
 inner join {{ ref('stg_orbit__users') }} as users on subscriptions.user_id = users.user_id
