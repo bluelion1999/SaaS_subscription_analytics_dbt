@@ -39,3 +39,29 @@ create or replace semantic view orbit_analytics.marts.gtm_ai
     invoices.lost_revenue as sum(lost_amount),
     invoices.refunded_revenue as sum(refunded_amount)
   )
+  ai_verified_queries (
+    churned_mrr as (
+      question 'What was total churned MRR?'
+      verified_at 1785099365
+      onboarding_question true
+      sql 'select net_mrr_movement from semantic_view(orbit_analytics.marts.gtm_ai metrics movements.net_mrr_movement dimensions movements.movement_type) where movement_type = ''churn'''
+    ),
+    active_enterprise_subscriptions as (
+      question 'How many active enterprise subscriptions are there?'
+      verified_at 1785099365
+      onboarding_question true
+      sql 'select subscription_count from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.subscription_count dimensions subscriptions.status, subscriptions.plan_tier) where status = ''active'' and plan_tier = ''enterprise'''
+    ),
+    revenue_collected_vs_lost as (
+      question 'How much revenue was collected versus lost to failed payments?'
+      verified_at 1785099365
+      onboarding_question true
+      sql 'select collected_revenue, lost_revenue from semantic_view(orbit_analytics.marts.gtm_ai metrics invoices.collected_revenue, invoices.lost_revenue)'
+    ),
+    engagement_by_status as (
+      question 'What is average days since last activity for active subscriptions?'
+      verified_at 1785099365
+      onboarding_question true
+      sql 'select avg_days_since_last_event from semantic_view(orbit_analytics.marts.gtm_ai metrics engagement.avg_days_since_last_event dimensions subscriptions.status) where status = ''active'''
+    )
+  )

@@ -36,6 +36,8 @@ graph LR
         DSC[dim_subscriptions_current]
         FPE[fct_product_events]
         MRR[subscription_mrr_movements]
+        ENG[subscription_engagement_summary]
+        INV[fct_invoices]
     end
 
     subgraph AI["Cortex Analyst"]
@@ -47,12 +49,17 @@ graph LR
     RS --> SS --> DSC
     RS --> SS --> SNAP
     RE --> SE --> FPE
-    RI --> SI
+    RI --> SI --> INV
 
     SNAP --> MRR
     DSC --> MRR
+    DSC --> INV
+    FPE --> ENG
+
     MRR --> SEM
     DSC --> SEM
+    ENG --> SEM
+    INV --> SEM
     SEM --> APP
 ```
 
@@ -61,8 +68,8 @@ graph LR
 - **Seeds** — deterministic synthetic data (`scripts/generate_seed_data.py`, fixed random seed, fixed reference date) standing in for a raw source system. Lands in one shared `raw` schema regardless of environment.
 - **Staging** — 1:1 cleanup of each source table, no joins.
 - **Snapshot** — `subscriptions_snapshot` captures SCD Type 2 history over the mutable `raw_subscriptions` table using a timestamp strategy on `updated_at`.
-- **Marts** — `dim_subscriptions_current` (current-state dimension), `fct_product_events` (incremental fact table), and `subscription_mrr_movements` (MRR movement classification computed directly off the snapshot's history).
-- **AI layer** — `gtm_ai`, a Cortex Analyst semantic view over exactly the two marts above, queried through a public Streamlit app.
+- **Marts** — `dim_subscriptions_current` (current-state dimension), `fct_product_events` (incremental fact table), `subscription_mrr_movements` (MRR movement classification off the snapshot's history), `subscription_engagement_summary` (usage aggregates off `fct_product_events`), and `fct_invoices` (revenue collection outcomes off `stg_orbit__invoices`).
+- **AI layer** — `gtm_ai`, a Cortex Analyst semantic view over four of the marts above (everything except `fct_product_events` itself, which feeds in via the engagement summary instead), queried through a public Streamlit app.
 
 ## Advanced dbt features covered
 
@@ -79,18 +86,18 @@ graph LR
 
 ## The Cortex Analyst layer: `gtm_ai`
 
-[`semantic_views/gtm_ai.sql`](semantic_views/gtm_ai.sql) is a native Snowflake `CREATE SEMANTIC VIEW` object (not a dbt-managed resource) scoped to exactly `subscription_mrr_movements` and `dim_subscriptions_current` — nothing else in `marts` is reachable through it. It's queried two ways:
+[`semantic_views/gtm_ai.sql`](semantic_views/gtm_ai.sql) is a native Snowflake `CREATE SEMANTIC VIEW` object (not a dbt-managed resource) scoped to exactly four tables — `subscription_mrr_movements`, `dim_subscriptions_current`, `subscription_engagement_summary`, `fct_invoices` — nothing else in `marts` is reachable through it. It's queried two ways:
 
 - **Snowsight's built-in Cortex Analyst chat UI**, for interactive exploration with your own Snowflake login.
 - **A public Streamlit app** ([`streamlit_app/gtm_ai_app.py`](streamlit_app/gtm_ai_app.py)), hosted externally on Streamlit Community Cloud so anyone can use it with no Snowflake account at all.
 
 The public app can't use Streamlit-in-Snowflake (SiS has no anonymous-access mode — every SiS viewer must authenticate as a real Snowflake user). Genuine public access means every anonymous visitor rides on one shared service credential behind the scenes, so that credential's restrictions *are* the entire security boundary:
 
-- A dedicated service user (`svc_gtm_ai_app`, `TYPE = SERVICE`) authenticated via a Programmatic Access Token, hard-restricted to one role (`ROLE_RESTRICTION`) that has never been granted anything beyond `SELECT` on the two marts and the semantic view — no write privileges anywhere, no relation to the `orbit_dbt_role` used to build the project.
+- A dedicated service user (`svc_gtm_ai_app`, `TYPE = SERVICE`) authenticated via a Programmatic Access Token, hard-restricted to one role (`ROLE_RESTRICTION`) that has never been granted anything beyond `SELECT` on those four marts and the semantic view — no write privileges anywhere, no relation to the `orbit_dbt_role` used to build the project.
 - A dedicated low-privilege warehouse with a resource monitor (credit quota + auto-suspend), so anonymous traffic has a hard cost ceiling.
 - Application-layer defense-in-depth on top of that RBAC boundary: exponential-backoff retry on transient API failures only, a read-only SQL allowlist check before ever executing anything Cortex Analyst returns, and 3-way self-consistency voting (ask the same question 3 times, execute each candidate, return the majority result by actual result set — not SQL text).
 
-Verified end-to-end: direct queries against tables outside the granted scope (`fct_product_events`, raw/staging tables) correctly fail on privilege even when attempted directly, bypassing the semantic view entirely — confirming Snowflake's RBAC, not the semantic view's own `TABLES` clause, is the real security boundary.
+Verified end-to-end: direct queries against tables outside the granted scope (`fct_product_events`, raw/staging tables) correctly fail on privilege even when attempted directly, bypassing the semantic view entirely — confirming Snowflake's RBAC, not the semantic view's own `TABLES` clause, is the real security boundary. Also worth knowing if you extend this yourself: `CREATE OR REPLACE SEMANTIC VIEW` drops its grants exactly like a table would, and since it's not dbt-managed there's no automatic reconciliation — the grant has to be manually re-applied after every change (documented at the top of the file).
 
 ## Notable design decisions (and bugs caught along the way)
 
@@ -103,6 +110,10 @@ Verified end-to-end: direct queries against tables outside the granted scope (`f
 - **`raw` is shared on purpose, not an oversight.** Sources are hardcoded to one literal `raw` schema, bypassing the environment-aware schema macro entirely — this matches how a real upstream EL tool would populate a single landing zone that every dbt environment reads from. (Learned the hard way: an early cleanup pass dropped that schema as "orphaned," breaking every `source()` reference until it was reseeded.)
 - **CI intentionally excludes seeds.** This project's Snowflake warehouse is persistent, unlike a DuckDB project where every CI run gets a fresh ephemeral database — re-seeding on every push would silently reset `raw`'s accumulated history, so CI runs `dbt build --exclude resource_type:seed` instead, treating seeds as a one-time bootstrap rather than routine pipeline state.
 - **The semantic view's grain matters more than its schema.** `subscription_mrr_movements` is one row per movement *event* (safe to `SUM` for movement metrics like churned MRR); `dim_subscriptions_current` is one row per subscription's *current* state (safe to `SUM` for point-in-time totals like active MRR). Summing the wrong table for the wrong question silently double-counts.
+- **`fct_invoices` isn't a two-source reconciliation.** `generate_seed_data.py` derives every invoice's `amount` directly from the subscription's `mrr_amount` at generation time, so there's no price drift to catch. The mart's real value is `status` (`paid`/`failed`/`refunded`), surfaced as three mutually-exclusive amount buckets that sum back to `amount` — revenue collection outcomes, not variance detection.
+- **`no_change` was a real, tested value missing from its own accepted_values list.** `subscription_mrr_movements` has always been able to legitimately produce `'no_change'` (covered by its own unit test) for a net-zero MRR change with no status transition, but the `accepted_values` test never included it — so it only surfaced as a test failure once enough simulated rounds had accumulated to actually produce one in real data. The code was correct the whole time; the test list had just fallen out of sync with it.
+- **Invoices used to be frozen in time.** Unlike every other raw table, `raw_invoices` was never touched after the initial seed — `simulate_time_passing.py` mutated subscriptions and appended events but never generated new invoices, so `fct_invoices` couldn't actually demonstrate ongoing billing. Fixed by generating a new invoice each round for currently billable subscriptions, at their just-updated `mrr_amount`.
+- **A mart can be correctly built and still have nothing to show.** `subscription_engagement_summary` checks whether disengagement precedes churn in this data — it doesn't, because `simulate_time_passing.py`'s churn selection is random and has no connection to engagement. That's an honest finding about the synthetic data generator, not a bug in the mart.
 
 ## Project structure
 
@@ -117,7 +128,8 @@ Verified end-to-end: direct queries against tables outside the granted scope (`f
 │   ├── staging/orbit/                  # 1:1 cleanup of raw sources + source freshness config
 │   └── marts/
 │       ├── core/                       # dim_subscriptions_current, fct_product_events (contracted, grants)
-│       └── reporting/                  # subscription_mrr_movements + its unit tests + exposure
+│       └── reporting/                  # subscription_mrr_movements (+ unit tests), fct_invoices,
+│                                        # subscription_engagement_summary, exposure
 ├── tests/generic/
 │   └── test_reconciles_to_running_total.sql
 ├── semantic_views/

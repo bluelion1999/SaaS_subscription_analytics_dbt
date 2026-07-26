@@ -1,7 +1,8 @@
 """
 GTM AI -- publicly-hosted Streamlit chat UI over the gtm_ai Cortex Analyst
-semantic view (semantic_views/gtm_ai.sql), scoped to exactly two marts:
-subscription_mrr_movements and dim_subscriptions_current.
+semantic view (semantic_views/gtm_ai.sql), scoped to exactly four marts:
+subscription_mrr_movements, dim_subscriptions_current,
+subscription_engagement_summary, and fct_invoices.
 
 Runs externally (Streamlit Community Cloud), so genuine public
 access requires this app to authenticate to Snowflake itself, 
@@ -178,7 +179,7 @@ def ask_with_voting(question: str) -> dict:
     for response, df, sig in voteable:
         groups.setdefault(sig, []).append((response, df))
 
-    best_sig, best_group = max(groups.items(), key=lambda kv: len(kv[1]))
+    _, best_group = max(groups.items(), key=lambda kv: len(kv[1]))
     if len(best_group) > 1:
         response, df = best_group[0]
         consensus = f"{len(best_group)} of {N_VOTERS} responses agreed"
@@ -193,8 +194,8 @@ def ask_with_voting(question: str) -> dict:
 SUGGESTED_QUESTIONS = [
     "What was total churned MRR?",
     "How many active enterprise subscriptions are there?",
-    "What's total current MRR by plan tier?",
-    "How many subscriptions are currently at risk?",
+    "How much revenue was collected versus lost to failed payments?",
+    "What is average days since last activity for active subscriptions?",
 ]
 
 
@@ -243,9 +244,10 @@ with st.sidebar:
     st.divider()
     st.markdown(
         "**Architecture:** dbt (staging → SCD2 snapshot → incremental fact + "
-        "reporting mart) on Snowflake, queried here through a locked-down, "
+        "reporting marts) on Snowflake, queried here through a locked-down, "
         "read-only service role -- this app can only ever run `SELECT` "
-        "against two specific tables, nothing else."
+        "against four specific tables (MRR movements, current subscriptions, "
+        "engagement, invoices), nothing else."
     )
     st.divider()
     st.caption(
@@ -255,7 +257,7 @@ with st.sidebar:
 
 st.title("GTM AI")
 st.caption(
-    "Ask questions about SaaS subscription MRR movements and current subscriptions "
+    "Ask questions about SaaS subscription MRR movements, engagement, and revenue "
     "-- answered by Snowflake Cortex Analyst."
 )
 
