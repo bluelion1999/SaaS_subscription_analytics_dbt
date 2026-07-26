@@ -7,3 +7,5 @@ logs/
 .DS_Store
 dbt_internal_packages/
 state/
+.streamlit/secrets.toml
+__pycache__/
