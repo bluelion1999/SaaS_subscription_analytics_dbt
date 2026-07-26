@@ -35,6 +35,28 @@ models:
                 values: ['new','reactivation', 'expansion', 'contraction', 'at_risk', 'churn']
       - name: effective_date
         data_tests:
-          - not_null 
+          - not_null
 
-                  
+  - name: fct_invoices
+    description: >
+      One row per invoice. collected_amount/lost_amount/refunded_amount are
+      mutually exclusive buckets that sum back to amount, so any one of them
+      can be summed over a period with no WHERE clause.
+    columns:
+      - name: invoice_id
+        data_tests:
+          - unique
+          - not_null
+      - name: subscription_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_subscriptions_current')
+                field: subscription_id
+      - name: invoice_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['paid', 'failed', 'refunded']
