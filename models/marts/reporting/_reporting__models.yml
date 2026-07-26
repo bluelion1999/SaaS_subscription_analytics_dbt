@@ -9,6 +9,13 @@ models:
             combination_of_columns:
               - subscription_id
               - effective_date
+      - reconciles_to_running_total:
+          arguments:
+            column_name: current_mrr_amount
+            delta_column: mrr_delta
+            partition_by: subscription_id
+            order_by: effective_date
+
     columns:
       - name: subscription_id
         data_tests:
@@ -25,6 +32,6 @@ models:
                 values: ['new','reactivation', 'expansion', 'contraction', 'at_risk', 'churn']
       - name: effective_date
         data_tests:
-          - not_null
+          - not_null 
 
                   
