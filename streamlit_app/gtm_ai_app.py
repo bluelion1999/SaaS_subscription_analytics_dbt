@@ -196,6 +196,10 @@ SUGGESTED_QUESTIONS = [
     "How many active enterprise subscriptions are there?",
     "How much revenue was collected versus lost to failed payments?",
     "What is average days since last activity for active subscriptions?",
+    "What is total current MRR by plan tier?",
+    "What was total new MRR from new subscriptions?",
+    "How many subscriptions are currently in trial?",
+    "How many active subscriptions are there by country?",
 ]
 
 
@@ -265,10 +269,13 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 st.markdown("**Try asking:**")
-cols = st.columns(len(SUGGESTED_QUESTIONS))
-for col, suggestion in zip(cols, SUGGESTED_QUESTIONS):
-    if col.button(suggestion, use_container_width=True):
-        st.session_state.pending_question = suggestion
+QUESTIONS_PER_ROW = 4
+for row_start in range(0, len(SUGGESTED_QUESTIONS), QUESTIONS_PER_ROW):
+    row_questions = SUGGESTED_QUESTIONS[row_start:row_start + QUESTIONS_PER_ROW]
+    cols = st.columns(QUESTIONS_PER_ROW)
+    for col, suggestion in zip(cols, row_questions):
+        if col.button(suggestion, use_container_width=True):
+            st.session_state.pending_question = suggestion
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):

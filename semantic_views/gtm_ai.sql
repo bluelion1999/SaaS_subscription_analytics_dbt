@@ -87,5 +87,29 @@ create or replace semantic view orbit_analytics.marts.gtm_ai
       verified_at 1785099782
       onboarding_question true
       sql 'select plan_tier, total_mrr from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.total_mrr dimensions subscriptions.plan_tier)'
+    ),
+    contraction_mrr as (
+      question 'What was total contraction MRR from downgrades?'
+      verified_at 1785099897
+      onboarding_question false
+      sql 'select net_mrr_movement from semantic_view(orbit_analytics.marts.gtm_ai metrics movements.net_mrr_movement dimensions movements.movement_type) where movement_type = ''contraction'''
+    ),
+    new_mrr as (
+      question 'What was total new MRR from new subscriptions?'
+      verified_at 1785099897
+      onboarding_question true
+      sql 'select net_mrr_movement from semantic_view(orbit_analytics.marts.gtm_ai metrics movements.net_mrr_movement dimensions movements.movement_type) where movement_type = ''new'''
+    ),
+    trial_subscription_count as (
+      question 'How many subscriptions are currently in trial?'
+      verified_at 1785099897
+      onboarding_question true
+      sql 'select subscription_count from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.subscription_count dimensions subscriptions.status) where status = ''trial'''
+    ),
+    active_subscriptions_by_country as (
+      question 'How many active subscriptions are there by country?'
+      verified_at 1785099897
+      onboarding_question false
+      sql 'select country, subscription_count from semantic_view(orbit_analytics.marts.gtm_ai metrics subscriptions.subscription_count dimensions subscriptions.status, subscriptions.country) where status = ''active'''
     )
   )
